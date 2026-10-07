@@ -13,6 +13,13 @@ for finding and resuming previous OpenCode sessions.
 See [opencode-sessions/README.md](opencode-sessions/README.md) for installation,
 usage, and development details.
 
+### Claude Code Session Picker
+
+`claude-sessions` provides the `ccs` command: the same searchable interface for
+finding and resuming previous Claude Code sessions.
+
+See [claude-sessions/README.md](claude-sessions/README.md) for details.
+
 ## Setup
 
 Clone the repository, then install each tool from its own directory. For the
