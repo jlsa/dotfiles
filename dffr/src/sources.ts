@@ -1,4 +1,4 @@
-import { parseUnifiedDiff } from "./parse-unified"
+import { parsePlainText, parseUnifiedDiff } from "./parse-unified"
 import type { LoadedDiff } from "./model"
 
 export interface DiffSource {
@@ -15,7 +15,8 @@ export class ClipboardSource implements DiffSource {
     const text = result.stdout.toString()
     if (!text.trim()) throw new Error("The clipboard is empty.")
     const files = parseUnifiedDiff(text)
-    if (files.length === 0) throw new Error("The clipboard does not contain a unified diff.")
-    return { files, source: this.name }
+    return files.length > 0
+      ? { files, source: this.name, kind: "unified-diff" }
+      : { files: parsePlainText(text), source: `${this.name} text`, kind: "plain-text", text }
   }
 }

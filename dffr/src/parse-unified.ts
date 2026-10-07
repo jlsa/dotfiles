@@ -63,11 +63,21 @@ export function formatFile(file: FileDiff | undefined, maxLines = 500): string {
   if (!file) return "This file does not exist in this diff."
   const result: string[] = []
   for (const hunk of file.hunks) {
-    result.push(hunk.header)
+    if (hunk.header) result.push(hunk.header)
     result.push(...hunk.lines.map((line) => line.content))
   }
   if (result.length > maxLines) {
     return [...result.slice(0, maxLines), `… ${result.length - maxLines} more lines`].join("\n")
   }
   return result.join("\n") || "No content changes."
+}
+
+/** Represent arbitrary text in the same model as a diff, using one virtual file. */
+export function parsePlainText(input: string, path = "Clipboard text"): FileDiff[] {
+  const lines = input.replace(/\r\n/g, "\n").split("\n")
+  if (lines.at(-1) === "") lines.pop()
+  return [{
+    path,
+    hunks: [{ header: "", lines: lines.map((content) => ({ kind: "context", content })) }],
+  }]
 }

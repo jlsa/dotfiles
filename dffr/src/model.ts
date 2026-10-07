@@ -18,4 +18,6 @@ export interface FileDiff {
 export interface LoadedDiff {
   files: FileDiff[]
   source: string
+  kind: "unified-diff" | "plain-text"
+  text?: string
 }

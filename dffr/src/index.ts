@@ -9,6 +9,7 @@ import {
 import type { FileDiff, LoadedDiff } from "./model"
 import { formatFile } from "./parse-unified"
 import { ClipboardSource } from "./sources"
+import { comparePlainText } from "./text-compare"
 
 let left: LoadedDiff | undefined
 let right: LoadedDiff | undefined
@@ -136,6 +137,17 @@ function sideTitle(label: "LEFT" | "RIGHT", diff: LoadedDiff | undefined): strin
   return diff ? `${label} · ${diff.files.length} file${diff.files.length === 1 ? "" : "s"} · ${diff.source}` : `${label} · Empty`
 }
 
+function renderSelectedFile(): void {
+  if (left?.kind === "plain-text" && right?.kind === "plain-text" && left.text !== undefined && right.text !== undefined) {
+    const comparison = comparePlainText(left.text, right.text)
+    leftDiff.content = comparison.left || "(empty)"
+    rightDiff.content = comparison.right || "(empty)"
+    return
+  }
+  leftDiff.content = left ? formatFile(fileAt(left, selectedPath)) : "Press l to load the clipboard."
+  rightDiff.content = right ? formatFile(fileAt(right, selectedPath)) : "Press r to load the clipboard."
+}
+
 function refresh(): void {
   const paths = allPaths()
   if (!selectedPath || !paths.includes(selectedPath)) selectedPath = paths[0]
@@ -143,8 +155,7 @@ function refresh(): void {
   files.setSelectedIndex(Math.max(0, paths.indexOf(selectedPath ?? "")))
   leftTitle.content = sideTitle("LEFT", left)
   rightTitle.content = sideTitle("RIGHT", right)
-  leftDiff.content = left ? formatFile(fileAt(left, selectedPath)) : "Press l to load the clipboard."
-  rightDiff.content = right ? formatFile(fileAt(right, selectedPath)) : "Press r to load the clipboard."
+  renderSelectedFile()
   if (left && right) {
     summary.content = `${paths.length} file${paths.length === 1 ? "" : "s"} across both diffs. Select a file to compare its hunks.`
     summary.fg = "#94a3b8"
@@ -168,8 +179,7 @@ async function loadSide(side: "left" | "right"): Promise<void> {
 files.on(SelectRenderableEvents.SELECTION_CHANGED, (_index: number, option: SelectOption | null) => {
   if (!option?.value) return
   selectedPath = option.value as string
-  leftDiff.content = left ? formatFile(fileAt(left, selectedPath)) : "Press l to load the clipboard."
-  rightDiff.content = right ? formatFile(fileAt(right, selectedPath)) : "Press r to load the clipboard."
+  renderSelectedFile()
 })
 
 renderer.keyInput.on("keypress", (key) => {

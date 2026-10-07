@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { formatFile, parseUnifiedDiff } from "./parse-unified"
+import { formatFile, parsePlainText, parseUnifiedDiff } from "./parse-unified"
 
 const diff = `diff --git a/src/a.ts b/src/a.ts
 index 123..456 100644
@@ -26,5 +26,11 @@ describe("parseUnifiedDiff", () => {
 
   test("renders a file without metadata", () => {
     expect(formatFile(parseUnifiedDiff(diff)[0])).toBe("@@ -1,2 +1,2 @@\n-old\n+new\n keep")
+  })
+
+  test("models plain text as one virtual file without diff markers", () => {
+    const files = parsePlainText("first line\r\nsecond line\r\n")
+    expect(files[0].path).toBe("Clipboard text")
+    expect(formatFile(files[0])).toBe("first line\nsecond line")
   })
 })
