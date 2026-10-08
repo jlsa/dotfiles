@@ -33,15 +33,22 @@ the original text; filler rows that only keep the panes aligned have none.
 ### History
 
 Every text you load from the clipboard is saved, so you can compare it again
-later. Press `h` to show the history instead of the file list, choose an entry
-with `↑` / `↓`, and press `l` or `r` to load it on the left or right. Press `h`
-or `Esc` to go back to the file list.
+later. Press `h` to show the history instead of the file list and choose an
+entry with `↑` / `↓`.
+
+- `Enter` opens the entry on the side it was loaded on, together with the text
+  that was on the other side at that moment.
+- `l` or `r` loads only this entry on the left or right.
+- `/` searches the full text of every entry. Press `Enter` to keep the results
+  and choose from them, or `Esc` to clear the search.
+- `d` deletes the entry; press `d` again to confirm.
+- `h` or `Esc` goes back to the file list.
 
 The history is stored only on this machine, one JSON object per line, in
 `$XDG_DATA_HOME/dffr/history.jsonl` (by default
 `~/.local/share/dffr/history.jsonl`). Set `DFFR_HISTORY` to use another file.
 Loading the same text twice in a row saves it once. Delete the file to clear
-the history.
+the whole history.
 
 ### Shortcuts
 
@@ -49,9 +56,13 @@ the history.
 | --- | --- |
 | `l` | Load the clipboard (or the chosen history entry) into the left pane |
 | `r` | Load the clipboard (or the chosen history entry) into the right pane |
+| `s` | Swap the left and right pane |
 | `↑` / `↓` | Select a file, or a history entry |
 | `h` | Show or hide the history |
-| `q` / `Esc` | Quit (`Esc` closes the history first) |
+| `Enter` | Open a history entry with the text it was compared with |
+| `/` | Search the history |
+| `d` `d` | Delete a history entry |
+| `q` / `Esc` | Quit (`Esc` clears the search and closes the history first) |
 
 ## Development
 

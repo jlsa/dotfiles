@@ -1,12 +1,14 @@
 import {
   BoxRenderable,
+  InputRenderable,
+  InputRenderableEvents,
   SelectRenderable,
   SelectRenderableEvents,
   TextRenderable,
   createCliRenderer,
   type SelectOption,
 } from "@opentui/core"
-import { HistoryStore, type HistoryEntry } from "./history"
+import { HistoryStore, searchHistory, type HistoryEntry } from "./history"
 import type { FileDiff, LoadedDiff } from "./model"
 import { formatFile } from "./parse-unified"
 import { renderComparison } from "./render-compare"
@@ -16,8 +18,12 @@ import { comparePlainText } from "./text-compare"
 let left: LoadedDiff | undefined
 let right: LoadedDiff | undefined
 let selectedPath: string | undefined
-let mode: "files" | "history" = "files"
+type Side = "left" | "right"
+
+let mode: "files" | "history" | "search" = "files"
 let historyEntries: HistoryEntry[] = []
+let historyQuery = ""
+let pendingDeleteId: string | undefined
 const history = new HistoryStore()
 
 const renderer = await createCliRenderer({
@@ -60,6 +66,18 @@ const filePanel = new BoxRenderable(renderer, {
   padding: 1,
 })
 const fileTitle = new TextRenderable(renderer, { id: "files-title", content: "FILES", fg: "#94a3b8" })
+const search = new InputRenderable(renderer, {
+  id: "history-search",
+  width: "100%",
+  marginTop: 1,
+  placeholder: "Search history…",
+  backgroundColor: "#111a26",
+  focusedBackgroundColor: "#173452",
+  textColor: "#f8fafc",
+  focusedTextColor: "#f8fafc",
+  placeholderColor: "#64748b",
+  visible: false,
+})
 const files = new SelectRenderable(renderer, {
   id: "files",
   width: "100%",
@@ -107,6 +125,7 @@ const footer = new TextRenderable(renderer, {
 })
 
 filePanel.add(fileTitle)
+filePanel.add(search)
 filePanel.add(files)
 leftPanel.add(leftTitle)
 leftPanel.add(leftDiff)
@@ -136,7 +155,11 @@ function formatTime(iso: string): string {
 }
 
 function historyOptions(): SelectOption[] {
-  if (historyEntries.length === 0) return [{ name: "No history yet", description: "Texts you load are saved here", value: null }]
+  if (historyEntries.length === 0) {
+    return historyQuery
+      ? [{ name: "No matches", description: `Nothing in the history contains “${historyQuery}”`, value: null }]
+      : [{ name: "No history yet", description: "Texts you load are saved here", value: null }]
+  }
   return historyEntries.map((entry, index) => {
     const firstLine = entry.text.split("\n").find((line) => line.trim())?.trim() ?? "(blank)"
     const lineCount = entry.text.replace(/\n$/, "").split("\n").length
@@ -183,26 +206,46 @@ function renderSelectedFile(): void {
   rightDiff.content = right ? formatFile(fileAt(right, selectedPath)) : "Press r to load the clipboard."
 }
 
+const historyFooter = "Enter open both sides  ·  l/r load into left/right  ·  / search  ·  d delete  ·  s swap  ·  h/Esc back"
+
 function showFileList(): void {
   const paths = allPaths()
+  search.visible = false
   fileTitle.content = "FILES"
-  footer.content = "l load left  ·  r load right  ·  ↑/↓ choose file  ·  h history  ·  q quit"
+  footer.content = "l load left  ·  r load right  ·  s swap  ·  ↑/↓ choose file  ·  h history  ·  q quit"
   files.options = fileOptions()
   files.setSelectedIndex(Math.max(0, paths.indexOf(selectedPath ?? "")))
 }
 
-function showHistory(): void {
-  historyEntries = history.list()
-  fileTitle.content = `HISTORY · ${historyEntries.length}`
-  footer.content = "l load into left  ·  r load into right  ·  ↑/↓ choose entry  ·  h/Esc back to files  ·  q quit"
+/** Reload the history list, keeping the selection on the same entry where possible. */
+function showHistory(keepId?: string): void {
+  const all = history.list()
+  historyEntries = searchHistory(all, historyQuery)
+  search.visible = mode === "search" || historyQuery !== ""
+  fileTitle.content = historyQuery ? `HISTORY · ${historyEntries.length} of ${all.length}` : `HISTORY · ${all.length}`
+  footer.content = mode === "search" ? "Type to search the history  ·  Enter keep results  ·  Esc clear search" : historyFooter
   files.options = historyOptions()
-  files.setSelectedIndex(0)
+  files.setSelectedIndex(Math.max(0, historyEntries.findIndex((entry) => entry.id === keepId)))
+}
+
+/** Clear the search, keeping the selected entry selected. */
+function clearSearch(): void {
+  const keepId = selectedEntry()?.id
+  historyQuery = ""
+  search.value = ""
+  showHistory(keepId)
 }
 
 function setMode(next: typeof mode): void {
   mode = next
-  if (mode === "history") showHistory()
-  else showFileList()
+  if (mode === "files") {
+    showFileList()
+    files.focus()
+  } else {
+    showHistory(selectedEntry()?.id)
+    if (mode === "search") search.focus()
+    else files.focus()
+  }
 }
 
 function refresh(): void {
@@ -223,15 +266,25 @@ function showError(error: unknown): void {
   summary.fg = "#fca5a5"
 }
 
-function setSide(side: "left" | "right", loaded: LoadedDiff, message: string): void {
-  if (side === "left") left = loaded
-  else right = loaded
-  summary.content = message
-  summary.fg = "#86efac"
-  refresh()
+function otherSide(side: Side): Side {
+  return side === "left" ? "right" : "left"
 }
 
-async function loadSide(side: "left" | "right"): Promise<void> {
+function loadedOn(side: Side): LoadedDiff | undefined {
+  return side === "left" ? left : right
+}
+
+function setSide(side: Side, loaded: LoadedDiff | undefined): void {
+  if (side === "left") left = loaded
+  else right = loaded
+}
+
+function showSuccess(message: string): void {
+  summary.content = message
+  summary.fg = "#86efac"
+}
+
+async function loadSide(side: Side): Promise<void> {
   let loaded: LoadedDiff
   try {
     loaded = await new ClipboardSource().load()
@@ -239,19 +292,66 @@ async function loadSide(side: "left" | "right"): Promise<void> {
     showError(error)
     return
   }
-  setSide(side, loaded, `${side === "left" ? "Left" : "Right"} side loaded from the clipboard.`)
+  setSide(side, loaded)
+  refresh()
+  showSuccess(`${side === "left" ? "Left" : "Right"} side loaded from the clipboard.`)
   try {
-    if (loaded.text !== undefined) history.add(loaded.text, side)
+    if (loaded.text !== undefined) loaded.historyId = history.add(loaded.text, side, loadedOn(otherSide(side))?.historyId).id
   } catch (error) {
     showError(new Error(`Loaded, but could not save to history: ${error instanceof Error ? error.message : String(error)}`))
   }
 }
 
-function loadHistoryEntry(side: "left" | "right"): void {
+function fromHistory(entry: HistoryEntry): LoadedDiff {
+  return { ...loadText(entry.text, "History"), historyId: entry.id }
+}
+
+function selectedEntry(): HistoryEntry | undefined {
   const index = files.getSelectedOption()?.value
-  if (typeof index !== "number") return
-  const entry = historyEntries[index]
-  setSide(side, loadText(entry.text, "History"), `${side === "left" ? "Left" : "Right"} side loaded from history (${formatTime(entry.savedAt)}).`)
+  return typeof index === "number" ? historyEntries[index] : undefined
+}
+
+function loadHistoryEntry(side: Side): void {
+  const entry = selectedEntry()
+  if (!entry) return
+  setSide(side, fromHistory(entry))
+  refresh()
+  showSuccess(`${side === "left" ? "Left" : "Right"} side loaded from history (${formatTime(entry.savedAt)}).`)
+}
+
+/** Open an entry on its own side, together with the text it was compared with. */
+function openHistoryPair(): void {
+  const entry = selectedEntry()
+  if (!entry) return
+  const counterpart = history.counterpart(entry)
+  setSide(entry.side, fromHistory(entry))
+  if (counterpart) setSide(otherSide(entry.side), fromHistory(counterpart))
+  refresh()
+  if (counterpart) showSuccess(`Opened both sides from history (${formatTime(entry.savedAt)}).`)
+  else showSuccess(`Opened on the ${entry.side}; nothing was loaded on the other side when it was saved.`)
+}
+
+function deleteHistoryEntry(): void {
+  const entry = selectedEntry()
+  if (!entry) return
+  if (pendingDeleteId !== entry.id) {
+    pendingDeleteId = entry.id
+    summary.content = "Press d again to delete this history entry, or any other key to keep it."
+    summary.fg = "#fbbf24"
+    return
+  }
+  pendingDeleteId = undefined
+  const index = historyEntries.indexOf(entry)
+  history.remove(entry.id)
+  showHistory(historyEntries[index + 1]?.id ?? historyEntries[index - 1]?.id)
+  showSuccess("History entry deleted.")
+}
+
+function swapSides(): void {
+  if (!left && !right) return
+  ;[left, right] = [right, left]
+  refresh()
+  showSuccess("Swapped left and right.")
 }
 
 files.on(SelectRenderableEvents.SELECTION_CHANGED, (_index: number, option: SelectOption | null) => {
@@ -260,27 +360,51 @@ files.on(SelectRenderableEvents.SELECTION_CHANGED, (_index: number, option: Sele
   renderSelectedFile()
 })
 
-renderer.keyInput.on("keypress", (key) => {
-  if (mode === "history") {
-    if (key.name === "l") loadHistoryEntry("left")
-    if (key.name === "r") loadHistoryEntry("right")
-    if (key.name === "h" || key.name === "escape") {
-      setMode("files")
-      return
+search.on(InputRenderableEvents.INPUT, (value: string) => {
+  historyQuery = value
+  showHistory()
+})
+
+function handleKey(name: string): void {
+  if (mode === "search") {
+    if (name === "return") setMode("history")
+    if (name === "escape") {
+      clearSearch()
+      setMode("history")
     }
-  } else {
-    if (key.name === "l") void loadSide("left")
-    if (key.name === "r") void loadSide("right")
-    if (key.name === "h") {
-      try {
-        setMode("history")
-      } catch (error) {
-        showError(error)
-      }
-      return
-    }
+    return
   }
-  if (key.name === "q" || key.name === "escape") renderer.destroy()
+
+  if (name !== "d") pendingDeleteId = undefined
+  if (name === "s") return swapSides()
+
+  if (mode === "history") {
+    if (name === "l") loadHistoryEntry("left")
+    if (name === "r") loadHistoryEntry("right")
+    if (name === "return") openHistoryPair()
+    if (name === "d") deleteHistoryEntry()
+    if (name === "/") setMode("search")
+    if (name === "escape" && historyQuery) clearSearch()
+    else if (name === "h" || name === "escape") setMode("files")
+    if (name === "q") renderer.destroy()
+    return
+  }
+
+  if (name === "l") void loadSide("left")
+  if (name === "r") void loadSide("right")
+  if (name === "h") setMode("history")
+  if (name === "q" || name === "escape") renderer.destroy()
+}
+
+renderer.keyInput.on("keypress", (key) => {
+  const name = key.name === "slash" ? "/" : key.name
+  // The "/" that opens the search field should not also be typed into it.
+  if (mode === "history" && name === "/") key.preventDefault()
+  try {
+    handleKey(name)
+  } catch (error) {
+    showError(error)
+  }
 })
 
 leftPanel.onSizeChange = renderSelectedFile

@@ -20,4 +20,6 @@ export interface LoadedDiff {
   source: string
   kind: "unified-diff" | "plain-text"
   text?: string
+  /** The history entry this text was saved as or loaded from. */
+  historyId?: string
 }
