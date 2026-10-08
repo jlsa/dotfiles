@@ -6,14 +6,19 @@ import {
   createCliRenderer,
   type SelectOption,
 } from "@opentui/core"
+import { HistoryStore, type HistoryEntry } from "./history"
 import type { FileDiff, LoadedDiff } from "./model"
 import { formatFile } from "./parse-unified"
-import { ClipboardSource } from "./sources"
+import { renderComparison } from "./render-compare"
+import { ClipboardSource, loadText } from "./sources"
 import { comparePlainText } from "./text-compare"
 
 let left: LoadedDiff | undefined
 let right: LoadedDiff | undefined
 let selectedPath: string | undefined
+let mode: "files" | "history" = "files"
+let historyEntries: HistoryEntry[] = []
+const history = new HistoryStore()
 
 const renderer = await createCliRenderer({
   screenMode: "alternate-screen",
@@ -124,6 +129,25 @@ function allPaths(): string[] {
   return [...new Set([...(left?.files ?? []), ...(right?.files ?? [])].map((file) => file.path))].sort((a, b) => a.localeCompare(b))
 }
 
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function historyOptions(): SelectOption[] {
+  if (historyEntries.length === 0) return [{ name: "No history yet", description: "Texts you load are saved here", value: null }]
+  return historyEntries.map((entry, index) => {
+    const firstLine = entry.text.split("\n").find((line) => line.trim())?.trim() ?? "(blank)"
+    const lineCount = entry.text.replace(/\n$/, "").split("\n").length
+    return {
+      name: firstLine,
+      description: `${formatTime(entry.savedAt)} · ${entry.side} · ${lineCount} line${lineCount === 1 ? "" : "s"}`,
+      value: index,
+    }
+  })
+}
+
 function fileOptions(): SelectOption[] {
   const paths = allPaths()
   if (paths.length === 0) return [{ name: "No diffs loaded", description: "Press l or r to load your clipboard", value: null }]
@@ -137,22 +161,54 @@ function sideTitle(label: "LEFT" | "RIGHT", diff: LoadedDiff | undefined): strin
   return diff ? `${label} · ${diff.files.length} file${diff.files.length === 1 ? "" : "s"} · ${diff.source}` : `${label} · Empty`
 }
 
+/** Width available for text inside a panel: minus its border and padding. */
+function innerWidth(panel: BoxRenderable): number {
+  return panel.width - 4
+}
+
 function renderSelectedFile(): void {
   if (left?.kind === "plain-text" && right?.kind === "plain-text" && left.text !== undefined && right.text !== undefined) {
-    const comparison = comparePlainText(left.text, right.text)
-    leftDiff.content = comparison.left || "(empty)"
-    rightDiff.content = comparison.right || "(empty)"
+    const rows = comparePlainText(left.text, right.text)
+    const rendered = renderComparison(rows, { left: innerWidth(leftPanel), right: innerWidth(rightPanel) })
+    // The comparison wraps long lines itself to keep both panes aligned.
+    leftDiff.wrapMode = "none"
+    rightDiff.wrapMode = "none"
+    leftDiff.content = rendered.left
+    rightDiff.content = rendered.right
     return
   }
+  leftDiff.wrapMode = "word"
+  rightDiff.wrapMode = "word"
   leftDiff.content = left ? formatFile(fileAt(left, selectedPath)) : "Press l to load the clipboard."
   rightDiff.content = right ? formatFile(fileAt(right, selectedPath)) : "Press r to load the clipboard."
+}
+
+function showFileList(): void {
+  const paths = allPaths()
+  fileTitle.content = "FILES"
+  footer.content = "l load left  ·  r load right  ·  ↑/↓ choose file  ·  h history  ·  q quit"
+  files.options = fileOptions()
+  files.setSelectedIndex(Math.max(0, paths.indexOf(selectedPath ?? "")))
+}
+
+function showHistory(): void {
+  historyEntries = history.list()
+  fileTitle.content = `HISTORY · ${historyEntries.length}`
+  footer.content = "l load into left  ·  r load into right  ·  ↑/↓ choose entry  ·  h/Esc back to files  ·  q quit"
+  files.options = historyOptions()
+  files.setSelectedIndex(0)
+}
+
+function setMode(next: typeof mode): void {
+  mode = next
+  if (mode === "history") showHistory()
+  else showFileList()
 }
 
 function refresh(): void {
   const paths = allPaths()
   if (!selectedPath || !paths.includes(selectedPath)) selectedPath = paths[0]
-  files.options = fileOptions()
-  files.setSelectedIndex(Math.max(0, paths.indexOf(selectedPath ?? "")))
+  if (mode === "files") showFileList()
   leftTitle.content = sideTitle("LEFT", left)
   rightTitle.content = sideTitle("RIGHT", right)
   renderSelectedFile()
@@ -162,33 +218,73 @@ function refresh(): void {
   }
 }
 
+function showError(error: unknown): void {
+  summary.content = error instanceof Error ? error.message : String(error)
+  summary.fg = "#fca5a5"
+}
+
+function setSide(side: "left" | "right", loaded: LoadedDiff, message: string): void {
+  if (side === "left") left = loaded
+  else right = loaded
+  summary.content = message
+  summary.fg = "#86efac"
+  refresh()
+}
+
 async function loadSide(side: "left" | "right"): Promise<void> {
+  let loaded: LoadedDiff
   try {
-    const loaded = await new ClipboardSource().load()
-    if (side === "left") left = loaded
-    else right = loaded
-    summary.content = `${side === "left" ? "Left" : "Right"} diff loaded from the clipboard.`
-    summary.fg = "#86efac"
-    refresh()
+    loaded = await new ClipboardSource().load()
   } catch (error) {
-    summary.content = error instanceof Error ? error.message : String(error)
-    summary.fg = "#fca5a5"
+    showError(error)
+    return
+  }
+  setSide(side, loaded, `${side === "left" ? "Left" : "Right"} side loaded from the clipboard.`)
+  try {
+    if (loaded.text !== undefined) history.add(loaded.text, side)
+  } catch (error) {
+    showError(new Error(`Loaded, but could not save to history: ${error instanceof Error ? error.message : String(error)}`))
   }
 }
 
+function loadHistoryEntry(side: "left" | "right"): void {
+  const index = files.getSelectedOption()?.value
+  if (typeof index !== "number") return
+  const entry = historyEntries[index]
+  setSide(side, loadText(entry.text, "History"), `${side === "left" ? "Left" : "Right"} side loaded from history (${formatTime(entry.savedAt)}).`)
+}
+
 files.on(SelectRenderableEvents.SELECTION_CHANGED, (_index: number, option: SelectOption | null) => {
-  if (!option?.value) return
+  if (mode !== "files" || !option?.value) return
   selectedPath = option.value as string
   renderSelectedFile()
 })
 
 renderer.keyInput.on("keypress", (key) => {
-  if (key.name === "l") void loadSide("left")
-  if (key.name === "r") void loadSide("right")
-  if (key.name === "up") files.moveUp()
-  if (key.name === "down") files.moveDown()
+  if (mode === "history") {
+    if (key.name === "l") loadHistoryEntry("left")
+    if (key.name === "r") loadHistoryEntry("right")
+    if (key.name === "h" || key.name === "escape") {
+      setMode("files")
+      return
+    }
+  } else {
+    if (key.name === "l") void loadSide("left")
+    if (key.name === "r") void loadSide("right")
+    if (key.name === "h") {
+      try {
+        setMode("history")
+      } catch (error) {
+        showError(error)
+      }
+      return
+    }
+  }
   if (key.name === "q" || key.name === "escape") renderer.destroy()
 })
+
+leftPanel.onSizeChange = renderSelectedFile
+rightPanel.onSizeChange = renderSelectedFile
 
 refresh()
 files.focus()
