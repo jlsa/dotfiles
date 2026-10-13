@@ -70,8 +70,10 @@ office network by its router (MAC address), DHCP server and domain instead.
 No location permission is needed.
 
 1. At the office, save the network: `kmd here --work office`. Run `kmd here`
-   at any time to see the current network and whether it is known. Forget one
-   with `kmd here --forget office`.
+   at any time to see the current network and whether it is known. Use a
+   different label per office; saving again under the same label replaces it.
+   `kmd here --list` shows the saved networks with a `✓` next to the one you
+   are on now, and `kmd here --forget office` removes one.
 2. Install the schedule: `kmd auto install`. This creates a LaunchAgent that
    runs `kmd auto` at 10:00 and 14:00 (`--at 09:30,13:00` for other times). A
    time that is missed because the Mac was asleep runs at the next wake.

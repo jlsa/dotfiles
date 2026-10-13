@@ -43,8 +43,9 @@ export const usage = `kmd — travel expenses per month
   kmd list [month]                days of a month
   kmd export [month] [--csv] [--copy] [--out file]
                                   table, or CSV with --csv; --copy and --out use CSV
-  kmd here [--work [label]] [--forget label]
-                                  show the current network; --work saves it as a work network
+  kmd here [--work [label]] [--forget label] [--list]
+                                  show the current network; --work saves it as a work network,
+                                  --list shows the saved work networks
   kmd auto [--force]              mark today when on a work network during work hours
   kmd auto install [--at 10:00,14:00] | uninstall | status
                                   LaunchAgent that runs "kmd auto" at fixed times
@@ -147,6 +148,20 @@ export function run(argv: string[], now = new Date()): number {
 
     case "here": {
       const settings = config.load()
+      if (flags.list === true) {
+        if (settings.networks.length === 0) {
+          console.log("No work networks saved yet. At the office, run: kmd here --work [label]")
+          return 0
+        }
+        const fingerprint = currentNetwork()
+        const width = Math.max(...settings.networks.map((network) => network.label.length))
+        for (const network of settings.networks) {
+          const here = matchNetwork(fingerprint, [network]) ? "✓" : " "
+          const saved = network.learnedAt ? `  (saved ${network.learnedAt.slice(0, 10)})` : ""
+          console.log(`${here} ${network.label.padEnd(width)}  ${describeNetwork(network)}${saved}`)
+        }
+        return 0
+      }
       if (typeof flags.forget === "string" || (flags.forget === true && rest[0])) {
         const label = typeof flags.forget === "string" ? flags.forget : rest[0]
         const kept = settings.networks.filter((network) => network.label !== label)
