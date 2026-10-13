@@ -20,6 +20,22 @@ finding and resuming previous Claude Code sessions.
 
 See [claude-sessions/README.md](claude-sessions/README.md) for details.
 
+### dffr
+
+`dffr` provides the `dffr` command: a terminal UI that compares two clipboard
+entries side by side, as unified diffs or as plain text, and keeps a history of
+what you compared.
+
+See [dffr/README.md](dffr/README.md) for details.
+
+### kmd
+
+`kmd` provides the `kmd` command: a terminal UI for tracking office days per
+month and exporting them as a kilometre claim. It can mark office days
+automatically when your Mac is on the office network.
+
+See [kmd/README.md](kmd/README.md) for details.
+
 ## Setup
 
 Clone the repository, then install each tool from its own directory. For the
