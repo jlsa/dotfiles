@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { filterSessions, parseSession, type Session } from "./sessions"
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { deleteSession, filterSessions, loadSessions, parseSession, type Session } from "./sessions"
 
 const sessions: Session[] = [
-  { id: "1", title: "Process invoices", directory: "/work/accounting", updated: "2026-09-27 12:00:00" },
-  { id: "2", title: "New homepage", directory: "/work/website", updated: "2026-09-26 12:00:00" },
+  { id: "1", title: "Process invoices", directory: "/work/accounting", updated: "2026-09-27 12:00:00", file: "/p/1.jsonl" },
+  { id: "2", title: "New homepage", directory: "/work/website", updated: "2026-09-26 12:00:00", file: "/p/2.jsonl" },
 ]
 
 const transcript = (...entries: object[]) => entries.map((entry) => JSON.stringify(entry)).join("\n")
@@ -42,5 +45,25 @@ describe("filterSessions", () => {
 
   test("combines multiple search terms", () => {
     expect(filterSessions(sessions, "homepage work")).toEqual([sessions[1]])
+  })
+})
+
+describe("deleteSession", () => {
+  test("removes the transcript and its related data", () => {
+    const claudeDir = mkdtempSync(join(tmpdir(), "ccs-"))
+    const projectsDir = join(claudeDir, "projects")
+    const projectDir = join(projectsDir, "-work-site")
+    const related = [join(projectDir, "abc", "subagents"), join(claudeDir, "file-history", "abc"), join(claudeDir, "session-env", "abc")]
+    for (const dir of related) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(projectDir, "abc.jsonl"), transcript({ type: "user", cwd: "/work/site", message: { content: "Hi" } }))
+    writeFileSync(join(projectDir, "other.jsonl"), transcript({ type: "user", cwd: "/work/site", message: { content: "Hello" } }))
+
+    const [session] = loadSessions(projectsDir).filter((item) => item.id === "abc")
+    deleteSession(projectsDir, session!)
+
+    expect(existsSync(join(projectDir, "abc.jsonl"))).toBe(false)
+    expect(existsSync(join(projectDir, "abc"))).toBe(false)
+    for (const dir of related.slice(1)) expect(existsSync(dir)).toBe(false)
+    expect(loadSessions(projectsDir).map((item) => item.id)).toEqual(["other"])
   })
 })

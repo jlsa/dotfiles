@@ -1,11 +1,12 @@
-import { readdirSync, readFileSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs"
+import { dirname, join } from "node:path"
 
 export interface Session {
   id: string
   title: string
   directory: string
   updated: string
+  file: string
 }
 
 const titleTypes = ["custom-title", "ai-title", "summary", "last-prompt"] as const
@@ -30,7 +31,7 @@ function promptText(content: unknown): string | undefined {
 
 // Parses one session transcript. Only the few lines that matter are decoded,
 // so large transcripts stay cheap to scan.
-export function parseSession(id: string, text: string, updated: Date): Session | null {
+export function parseSession(id: string, text: string, updated: Date): Omit<Session, "file"> | null {
   let directory: string | undefined
   let firstPrompt: string | undefined
   const titles: Partial<Record<TitleType, string>> = {}
@@ -77,7 +78,7 @@ export function loadSessions(projectsDir: string): Session[] {
       try {
         const stats = statSync(path)
         const session = parseSession(file.slice(0, -".jsonl".length), readFileSync(path, "utf8"), stats.mtime)
-        if (session) found.push({ session, time: stats.mtimeMs })
+        if (session) found.push({ session: { ...session, file: path }, time: stats.mtimeMs })
       } catch {
         // Skip unreadable or partially written transcripts.
       }
@@ -85,6 +86,19 @@ export function loadSessions(projectsDir: string): Session[] {
   }
 
   return found.sort((a, b) => b.time - a.time).map((item) => item.session)
+}
+
+// Removes the transcript and the data Claude Code keeps next to it: the
+// subagent directory, the file history and the session environment.
+export function deleteSession(projectsDir: string, session: Session): void {
+  const claudeDir = dirname(projectsDir)
+  const paths = [
+    session.file,
+    session.file.slice(0, -".jsonl".length),
+    join(claudeDir, "file-history", session.id),
+    join(claudeDir, "session-env", session.id),
+  ]
+  for (const path of paths) rmSync(path, { recursive: true, force: true })
 }
 
 export function filterSessions(sessions: Session[], query: string): Session[] {

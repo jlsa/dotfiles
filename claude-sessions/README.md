@@ -24,6 +24,9 @@ filter the list, use the arrow keys to select a session, and press Enter to
 open Claude Code in the correct project directory and resume the session. Press
 Escape once to clear the search and again to close the TUI.
 
+Press Ctrl+X to delete the selected session. Press Ctrl+X again to confirm, or
+any other key to cancel.
+
 You can pre-filter the list using part of a title or directory name:
 
 ```sh
@@ -36,7 +39,9 @@ runtime.
 ## Details
 
 - Reads the session transcripts in `~/.claude/projects` by default.
-- Does not modify or delete sessions.
+- Only changes files when you delete a session. It then removes the transcript,
+  its subagent directory, and the session data in `~/.claude/file-history` and
+  `~/.claude/session-env`.
 - Uses the session name (`/rename`), then the generated title, then the first
   prompt as the title. Subagent transcripts are not listed.
 - Use `CLAUDE_PROJECTS_DIR=/another/path ccs` to select a different directory.

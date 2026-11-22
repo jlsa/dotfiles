@@ -10,7 +10,7 @@ import {
 } from "@opentui/core"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { filterSessions, loadSessions, type Session } from "./sessions"
+import { deleteSession, filterSessions, loadSessions, type Session } from "./sessions"
 
 const initialQuery = process.argv.slice(2).join(" ")
 const projectsDir = process.env.CLAUDE_PROJECTS_DIR ?? join(process.env.HOME ?? "", ".claude/projects")
@@ -79,9 +79,10 @@ const list = new SelectRenderable(renderer, {
   descriptionColor: "#64748b",
   selectedDescriptionColor: "#fed7aa",
 })
+const footerHelp = "↑/↓ select  •  Enter open  •  Ctrl+X delete  •  Esc clear/exit  •  Ctrl+C exit"
 const footer = new TextRenderable(renderer, {
   id: "footer",
-  content: "↑/↓ select  •  Enter open  •  Esc clear/exit  •  Ctrl+C exit",
+  content: footerHelp,
   fg: "#64748b",
   height: 1,
   marginTop: 1,
@@ -108,15 +109,42 @@ function asOptions(items: Session[]): SelectOption[] {
   }))
 }
 
-function updateList(query: string): void {
+function updateList(query: string, index = 0): void {
   list.options = asOptions(filterSessions(sessions, query))
-  list.setSelectedIndex(0)
+  list.setSelectedIndex(Math.min(index, list.options.length - 1))
+}
+
+function showFooter(content: string, fg = "#64748b"): void {
+  footer.content = content
+  footer.fg = fg
+}
+
+// The session that waits for a second Ctrl+X before it is deleted.
+let pendingDelete: Session | null = null
+
+function requestDelete(session: Session): void {
+  if (pendingDelete !== session) {
+    pendingDelete = session
+    showFooter(`Delete "${session.title}"? Press Ctrl+X again to confirm, any other key to cancel`, "#fca5a5")
+    return
+  }
+
+  pendingDelete = null
+  const index = list.getSelectedIndex()
+  try {
+    deleteSession(projectsDir, session)
+  } catch (error) {
+    showFooter(`Could not delete session: ${error instanceof Error ? error.message : String(error)}`, "#fca5a5")
+    return
+  }
+  sessions = sessions.filter((item) => item !== session)
+  updateList(search.value, index)
+  showFooter(`Deleted "${session.title}"`, "#86efac")
 }
 
 async function openSession(session: Session): Promise<void> {
   if (!existsSync(session.directory)) {
-    footer.content = `Project directory no longer exists: ${session.directory}`
-    footer.fg = "#fca5a5"
+    showFooter(`Project directory no longer exists: ${session.directory}`, "#fca5a5")
     return
   }
 
@@ -138,6 +166,16 @@ list.on(SelectRenderableEvents.ITEM_SELECTED, (_index: number, option: SelectOpt
 })
 
 renderer.keyInput.on("keypress", (key) => {
+  if (key.ctrl && key.name === "x") {
+    const session = list.getSelectedOption()?.value as Session | null | undefined
+    if (session) requestDelete(session)
+    return
+  }
+  if (pendingDelete) {
+    pendingDelete = null
+    showFooter(footerHelp)
+    return
+  }
   if (key.name === "up") list.moveUp()
   if (key.name === "down") list.moveDown()
   if (key.name === "return") list.selectCurrent()
